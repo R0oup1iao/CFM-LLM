@@ -1,24 +1,18 @@
 import argparse
-import os
+import random
+import numpy as np
 import torch
-import torch.backends
+
 from exp.exp_long_term_forecasting import Exp_Long_Term_Forecast
 from exp.exp_imputation import Exp_Imputation
 from exp.exp_short_term_forecasting import Exp_Short_Term_Forecast
 from exp.exp_anomaly_detection import Exp_Anomaly_Detection
 from exp.exp_classification import Exp_Classification
 from utils.print_args import print_args
-import random
-import numpy as np
 
-if __name__ == '__main__':
-    fix_seed = 2021
-    random.seed(fix_seed)
-    torch.manual_seed(fix_seed)
-    np.random.seed(fix_seed)
-
-    parser = argparse.ArgumentParser(description='TimesNet')
-
+def get_args(cli_args=None):
+    parser = argparse.ArgumentParser(description='CFMLLM')
+    
     # basic config
     parser.add_argument('--task_name', type=str, required=True, default='long_term_forecast',
                         help='task name, options:[long_term_forecast, short_term_forecast, imputation, classification, anomaly_detection]')
@@ -102,7 +96,7 @@ if __name__ == '__main__':
     parser.add_argument('--gpu', type=int, default=0, help='gpu')
     parser.add_argument('--gpu_type', type=str, default='cuda', help='gpu type') # cuda or mps
     parser.add_argument('--use_multi_gpu', action='store_true', help='use multiple gpus', default=False)
-    parser.add_argument('--devices', type=str, default='0,1,2,3', help='device ids of multile gpus')
+    parser.add_argument('--devices', type=str, default='0,1', help='device ids of multile gpus')
 
     # de-stationary projector params
     parser.add_argument('--p_hidden_dims', type=int, nargs='+', default=[128, 128],
@@ -135,9 +129,29 @@ if __name__ == '__main__':
 
     # TimeXer
     parser.add_argument('--patch_len', type=int, default=16, help='patch length')
+    
+    if cli_args is not None:
+        return parser.parse_args(cli_args)
+    else:
+        return parser.parse_args()
+def setup_seed(seed=42):
+    random.seed(seed)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
 
-    args = parser.parse_args()
-    # args.use_gpu = True if torch.cuda.is_available() and args.use_gpu else False
+def main(args):
+    # 根据任务名称选择实验类
+    Exp = {
+        'long_term_forecast': Exp_Long_Term_Forecast,
+        'short_term_forecast': Exp_Short_Term_Forecast,
+        'imputation': Exp_Imputation,
+        'classification': Exp_Classification,
+        'anomaly_detection': Exp_Anomaly_Detection,
+    }.get(args.task_name, None)
+
+    if Exp is None:
+        raise ValueError(f"Unknown task_name: {args.task_name}")
+    
     args.use_gpu = True if args.use_gpu else False
     if torch.cuda.is_available() and args.use_gpu:
         args.device = torch.device('cuda:{}'.format(args.gpu))
@@ -159,20 +173,7 @@ if __name__ == '__main__':
 
     print('Args in experiment:')
     print_args(args)
-
-    if args.task_name == 'long_term_forecast':
-        Exp = Exp_Long_Term_Forecast
-    elif args.task_name == 'short_term_forecast':
-        Exp = Exp_Short_Term_Forecast
-    elif args.task_name == 'imputation':
-        Exp = Exp_Imputation
-    elif args.task_name == 'anomaly_detection':
-        Exp = Exp_Anomaly_Detection
-    elif args.task_name == 'classification':
-        Exp = Exp_Classification
-    else:
-        Exp = Exp_Long_Term_Forecast
-
+    
     if args.is_training:
         for ii in range(args.itr):
             # setting record of experiments
@@ -237,3 +238,9 @@ if __name__ == '__main__':
             torch.backends.mps.empty_cache()
         elif args.gpu_type == 'cuda':
             torch.cuda.empty_cache()
+
+if __name__ == '__main__':
+    fix_seed = 2021
+    setup_seed(fix_seed)
+    args = get_args()
+    main(args)
