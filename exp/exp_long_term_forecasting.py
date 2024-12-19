@@ -164,140 +164,140 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         return self.model
 
-def test(self, setting, test=0):
-    """
-    测试模型在给定设置下的性能。
+    def test(self, setting, test=0):
+        """
+        测试模型在给定设置下的性能。
 
-    参数:
-    setting (str): 测试设置的名称，用于加载模型和保存结果。
-    test (int): 标志位，表示是否加载已保存的模型进行测试。默认为0。
+        参数:
+        setting (str): 测试设置的名称，用于加载模型和保存结果。
+        test (int): 标志位，表示是否加载已保存的模型进行测试。默认为0。
 
-    返回:
-    无返回值。该函数会打印测试结果并将其保存到文件系统中。
-    """
-    # 获取测试数据和测试数据加载器
-    test_data, test_loader = self._get_data(flag='test')
-    
-    # 如果test标志位为真，则加载模型进行测试
-    if test:
-        print('loading model')
-        self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth')))
+        返回:
+        无返回值。该函数会打印测试结果并将其保存到文件系统中。
+        """
+        # 获取测试数据和测试数据加载器
+        test_data, test_loader = self._get_data(flag='test')
+        
+        # 如果test标志位为真，则加载模型进行测试
+        if test:
+            print('loading model')
+            self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth')))
 
-    # 初始化预测结果和真实值的列表
-    preds = []
-    trues = []
-    
-    # 定义测试结果保存路径并创建目录（如果不存在）
-    folder_path = './test_results/' + setting + '/'
-    if not os.path.exists(folder_path):
-        os.makedirs(folder_path)
+        # 初始化预测结果和真实值的列表
+        preds = []
+        trues = []
+        
+        # 定义测试结果保存路径并创建目录（如果不存在）
+        folder_path = './test_results/' + setting + '/'
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
 
-    # 将模型设置为评估模式，并禁用梯度计算
-    self.model.eval()
-    with torch.no_grad():
-        # 遍历测试数据加载器
-        for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(test_loader):
-            # 将数据转换为浮点类型并移动到指定设备
-            batch_x = batch_x.float().to(self.device)
-            batch_y = batch_y.float().to(self.device)
+        # 将模型设置为评估模式，并禁用梯度计算
+        self.model.eval()
+        with torch.no_grad():
+            # 遍历测试数据加载器
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(test_loader):
+                # 将数据转换为浮点类型并移动到指定设备
+                batch_x = batch_x.float().to(self.device)
+                batch_y = batch_y.float().to(self.device)
 
-            batch_x_mark = batch_x_mark.float().to(self.device)
-            batch_y_mark = batch_y_mark.float().to(self.device)
+                batch_x_mark = batch_x_mark.float().to(self.device)
+                batch_y_mark = batch_y_mark.float().to(self.device)
 
-            # 准备decoder输入
-            dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
-            dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
-            
-            # 使用自动混合精度进行模型推理（如果启用）
-            if self.args.use_amp:
-                with torch.cuda.amp.autocast():
+                # 准备decoder输入
+                dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
+                dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
+                
+                # 使用自动混合精度进行模型推理（如果启用）
+                if self.args.use_amp:
+                    with torch.cuda.amp.autocast():
+                        outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                else:
                     outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-            else:
-                outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
 
-            # 根据特征类型调整输出维度
-            f_dim = -1 if self.args.features == 'MS' else 0
-            outputs = outputs[:, -self.args.pred_len:, :]
-            batch_y = batch_y[:, -self.args.pred_len:, :].to(self.device)
-            
-            # 将输出和真实值移动到CPU并转换为numpy数组
-            outputs = outputs.detach().cpu().numpy()
-            batch_y = batch_y.detach().cpu().numpy()
-            
-            # 如果数据被缩放且需要反转，则执行逆缩放操作
-            if test_data.scale and self.args.inverse:
-                shape = batch_y.shape
-                if self.args.features == 'MS':
-                    outputs = np.tile(outputs, [1, 1, batch_y.shape[-1]])
-                outputs = test_data.inverse_transform(outputs.reshape(shape[0] * shape[1], -1)).reshape(shape)
-                batch_y = test_data.inverse_transform(batch_y.reshape(shape[0] * shape[1], -1)).reshape(shape)
-            
-            # 根据特征类型调整输出和真实值的维度
-            outputs = outputs[:, :, f_dim:]
-            batch_y = batch_y[:, :, f_dim:]
-
-            # 将当前批次的预测结果和真实值添加到列表中
-            pred = outputs
-            true = batch_y
-
-            preds.append(pred)
-            trues.append(true)
-            
-            # 每20个批次可视化一次预测结果和真实值
-            if i % 20 == 0:
-                input = batch_x.detach().cpu().numpy()
+                # 根据特征类型调整输出维度
+                f_dim = -1 if self.args.features == 'MS' else 0
+                outputs = outputs[:, -self.args.pred_len:, :]
+                batch_y = batch_y[:, -self.args.pred_len:, :].to(self.device)
+                
+                # 将输出和真实值移动到CPU并转换为numpy数组
+                outputs = outputs.detach().cpu().numpy()
+                batch_y = batch_y.detach().cpu().numpy()
+                
+                # 如果数据被缩放且需要反转，则执行逆缩放操作
                 if test_data.scale and self.args.inverse:
-                    shape = input.shape
-                    input = test_data.inverse_transform(input.reshape(shape[0] * shape[1], -1)).reshape(shape)
-                gt = np.concatenate((input[0, :, -1], true[0, :, -1]), axis=0)
-                pd = np.concatenate((input[0, :, -1], pred[0, :, -1]), axis=0)
-                visual(gt, pd, os.path.join(folder_path, str(i) + '.pdf'))
+                    shape = batch_y.shape
+                    if self.args.features == 'MS':
+                        outputs = np.tile(outputs, [1, 1, batch_y.shape[-1]])
+                    outputs = test_data.inverse_transform(outputs.reshape(shape[0] * shape[1], -1)).reshape(shape)
+                    batch_y = test_data.inverse_transform(batch_y.reshape(shape[0] * shape[1], -1)).reshape(shape)
+                
+                # 根据特征类型调整输出和真实值的维度
+                outputs = outputs[:, :, f_dim:]
+                batch_y = batch_y[:, :, f_dim:]
 
-    # 将所有批次的预测结果和真实值合并
-    preds = np.concatenate(preds, axis=0)
-    trues = np.concatenate(trues, axis=0)
-    print('test shape:', preds.shape, trues.shape)
-    
-    # 重新调整预测结果和真实值的形状
-    preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
-    trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
-    print('test shape:', preds.shape, trues.shape)
+                # 将当前批次的预测结果和真实值添加到列表中
+                pred = outputs
+                true = batch_y
 
-    # 结果保存路径
-    folder_path = './results/' + setting + '/'
-    if not os.path.exists(folder_path):
-        os.makedirs(folder_path)
-    
-    # 如果启用DTW计算，则计算预测结果和真实值之间的DTW距离
-    if self.args.use_dtw:
-        dtw_list = []
-        manhattan_distance = lambda x, y: np.abs(x - y)
-        for i in range(preds.shape[0]):
-            x = preds[i].reshape(-1,1)
-            y = trues[i].reshape(-1,1)
-            if i % 100 == 0:
-                print("calculating dtw iter:", i)
-            d, _, _, _ = accelerated_dtw(x, y, dist=manhattan_distance)
-            dtw_list.append(d)
-        dtw = np.array(dtw_list).mean()
-    else:
-        dtw = 'not calculated'
-    
-    # 计算并打印性能指标
-    mae, mse, rmse, mape, mspe = metric(preds, trues)
-    print('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-    
-    # 将设置名称和性能指标写入结果文件
-    f = open("result_long_term_forecast.txt", 'a')
-    f.write(setting + "  \n")
-    f.write('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-    f.write('\n')
-    f.write('\n')
-    f.close()
+                preds.append(pred)
+                trues.append(true)
+                
+                # 每20个批次可视化一次预测结果和真实值
+                if i % 20 == 0:
+                    input = batch_x.detach().cpu().numpy()
+                    if test_data.scale and self.args.inverse:
+                        shape = input.shape
+                        input = test_data.inverse_transform(input.reshape(shape[0] * shape[1], -1)).reshape(shape)
+                    gt = np.concatenate((input[0, :, -1], true[0, :, -1]), axis=0)
+                    pd = np.concatenate((input[0, :, -1], pred[0, :, -1]), axis=0)
+                    visual(gt, pd, os.path.join(folder_path, str(i) + '.pdf'))
 
-    # 将性能指标、预测结果和真实值保存为numpy数组
-    np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
-    np.save(folder_path + 'pred.npy', preds)
-    np.save(folder_path + 'true.npy', trues)
+        # 将所有批次的预测结果和真实值合并
+        preds = np.concatenate(preds, axis=0)
+        trues = np.concatenate(trues, axis=0)
+        print('test shape:', preds.shape, trues.shape)
+        
+        # 重新调整预测结果和真实值的形状
+        preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
+        trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
+        print('test shape:', preds.shape, trues.shape)
 
-    return
+        # 结果保存路径
+        folder_path = './results/' + setting + '/'
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+        
+        # 如果启用DTW计算，则计算预测结果和真实值之间的DTW距离
+        if self.args.use_dtw:
+            dtw_list = []
+            manhattan_distance = lambda x, y: np.abs(x - y)
+            for i in range(preds.shape[0]):
+                x = preds[i].reshape(-1,1)
+                y = trues[i].reshape(-1,1)
+                if i % 100 == 0:
+                    print("calculating dtw iter:", i)
+                d, _, _, _ = accelerated_dtw(x, y, dist=manhattan_distance)
+                dtw_list.append(d)
+            dtw = np.array(dtw_list).mean()
+        else:
+            dtw = 'not calculated'
+        
+        # 计算并打印性能指标
+        mae, mse, rmse, mape, mspe = metric(preds, trues)
+        print('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
+        
+        # 将设置名称和性能指标写入结果文件
+        f = open("result_long_term_forecast.txt", 'a')
+        f.write(setting + "  \n")
+        f.write('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
+        f.write('\n')
+        f.write('\n')
+        f.close()
+
+        # 将性能指标、预测结果和真实值保存为numpy数组
+        np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
+        np.save(folder_path + 'pred.npy', preds)
+        np.save(folder_path + 'true.npy', trues)
+
+        return

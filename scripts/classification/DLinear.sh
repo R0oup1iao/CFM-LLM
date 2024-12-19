@@ -1,5 +1,3 @@
-export CUDA_VISIBLE_DEVICES=5
-
 model_name=DLinear
 
 python -u run.py \
